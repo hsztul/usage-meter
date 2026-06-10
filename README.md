@@ -105,6 +105,17 @@ exactly what the menu bar and dropdown would show, with full error detail:
 This is the fastest way to confirm auth and endpoint behavior when changing a
 fetcher.
 
+### App icon
+
+The icon is generated in code — no image editor. `icon/GenerateIcons.swift`
+renders three 1024×1024 concepts (`swift icon/GenerateIcons.swift`); the chosen
+one (concentric progress rings) is `icon/AppIcon.png`. `make icns` resizes it
+into a multi-resolution `AppIcon.icns` via `sips`/`iconutil`, and `bundle`
+drops it into `Contents/Resources` with `CFBundleIconFile` set. To restyle,
+edit the generator or replace `icon/AppIcon.png` with any 1024×1024 master and
+rebuild. (The icon shows in Finder/Spotlight/Login Items — the menu bar itself
+stays as the text readout.)
+
 ### Notes
 
 - **Launch at Login** uses `SMAppService.mainApp`, which only works from a real
