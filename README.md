@@ -69,6 +69,22 @@ your machine and calls the same usage endpoints they do:
 Tokens are read fresh on every refresh, so re-logging into a CLI is picked up
 automatically. Nothing is stored or sent anywhere else.
 
+**Only have one of the two?** Services without a CLI login on this machine
+simply don't appear — no error rows. Sign in to the other CLI later and it
+shows up on the next refresh.
+
+### Does checking usage cost anything? No.
+
+These usage endpoints are **free metadata reads** — the exact same calls Claude
+Code makes when you run `/usage` and Codex makes for `/status`. They report
+your rate-limit windows; they don't send a prompt, don't consume tokens, and
+don't count against any quota or credits, no matter how often the app refreshes.
+
+(There's no way to get these numbers *without* the CLIs' OAuth tokens: usage is
+private account data, so the request has to authenticate as you. Anthropic's
+Admin/Usage API only covers API-key billing, not subscription windows, and
+neither CLI writes official percentages to disk.)
+
 ## Development
 
 ### Project layout
@@ -169,7 +185,9 @@ stays as the text readout.)
 
 - **A service shows `—`** ("Token expired"): open that CLI (`claude` or `codex`)
   once so it refreshes its token, then **Refresh Now**.
-- **"No login found"**: sign in to that CLI on this machine first.
+- **A service is missing from the menu**: there's no login for it on this
+  machine — sign in via that CLI, then **Refresh Now**. (`--check` will say
+  "not configured".)
 - **Keychain prompt keeps appearing**: click **Always Allow** (it reappears once
   per rebuild because of ad-hoc signing).
 - Run `… --check` (above) to see the underlying error message.

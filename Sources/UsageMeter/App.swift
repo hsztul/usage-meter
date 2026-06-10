@@ -22,6 +22,10 @@ enum Main {
         Task {
             for kind in ServiceKind.allCases {
                 let state = await fetchUsage(for: kind)
+                if case .notConfigured = state {
+                    print("\(kind.displayName): not configured (no \(kind.cliName) login found) — hidden from the menu")
+                    continue
+                }
                 print("\(kind.displayName): \(Fmt.statusTitle(kind: kind, state: state))")
                 switch state {
                 case .ok(let snap):
@@ -33,7 +37,7 @@ enum Main {
                     }
                 case .error(let message):
                     print("  error: \(message)")
-                case .loading:
+                case .loading, .notConfigured:
                     break
                 }
             }
@@ -61,6 +65,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             updateStatusTitle()
             rebuildMenu()
         }
+    }
+
+    /// Services with a CLI login on this machine. Unconfigured ones are hidden.
+    private var configuredServices: [ServiceKind] {
+        ServiceKind.allCases.filter { (states[$0] ?? .loading).isConfigured }
+    }
+
+    /// What the menu bar shows: the user's choice if it's configured, otherwise
+    /// the first configured service. The stored preference is left untouched so
+    /// it comes back if the user later logs into that CLI.
+    private var effectiveService: ServiceKind? {
+        let configured = configuredServices
+        if configured.contains(selectedService) { return selectedService }
+        return configured.first
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -102,7 +120,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     // MARK: - UI
 
     private func updateStatusTitle() {
-        let kind = selectedService
+        guard let kind = effectiveService else {
+            statusItem.button?.title = "◔"
+            return
+        }
         statusItem.button?.title = Fmt.statusTitle(kind: kind, state: states[kind] ?? .loading)
     }
 
@@ -110,18 +131,38 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         guard let menu = statusItem.menu else { return }
         menu.removeAllItems()
 
-        for kind in ServiceKind.allCases {
+        let configured = configuredServices
+        if configured.isEmpty {
+            let none = NSMenuItem(
+                title: "No Claude Code or Codex login found", action: nil, keyEquivalent: "")
+            none.isEnabled = false
+            menu.addItem(none)
+            let hint = NSMenuItem(title: "", action: nil, keyEquivalent: "")
+            hint.isEnabled = false
+            hint.attributedTitle = NSAttributedString(
+                string: "Sign in via the claude or codex CLI, then Refresh.",
+                attributes: [
+                    .font: NSFont.menuFont(ofSize: NSFont.smallSystemFontSize),
+                    .foregroundColor: NSColor.secondaryLabelColor,
+                ])
+            menu.addItem(hint)
+        }
+
+        // A selection checkmark only makes sense with more than one service.
+        let selectable = configured.count > 1
+        for kind in configured {
             let state = states[kind] ?? .loading
 
             let header = NSMenuItem(
-                title: "", action: #selector(selectService(_:)), keyEquivalent: "")
-            header.target = self
+                title: "", action: selectable ? #selector(selectService(_:)) : nil,
+                keyEquivalent: "")
+            header.target = selectable ? self : nil
             header.representedObject = kind.rawValue
-            header.state = kind == selectedService ? .on : .off
+            header.state = selectable && kind == effectiveService ? .on : .off
             header.attributedTitle = serviceHeaderTitle(kind: kind, state: state)
             menu.addItem(header)
 
-            for detail in serviceDetailLines(state: state) {
+            for detail in serviceDetailLines(kind: kind, state: state) {
                 let item = NSMenuItem(title: "", action: nil, keyEquivalent: "")
                 item.isEnabled = false
                 item.attributedTitle = detail
@@ -155,6 +196,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         switch state {
         case .loading: summary = "loading…"
         case .error: summary = "unavailable"
+        case .notConfigured: summary = ""  // hidden from the menu; not rendered
         case .ok(let snap): summary = "\(Fmt.percent(snap.fiveHour.remainingPercent)) left"
         }
         let title = NSMutableAttributedString(
@@ -169,13 +211,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         return title
     }
 
-    private func serviceDetailLines(state: ServiceState) -> [NSAttributedString] {
+    private func serviceDetailLines(kind: ServiceKind, state: ServiceState) -> [NSAttributedString] {
         let detailAttrs: [NSAttributedString.Key: Any] = [
             .font: NSFont.menuFont(ofSize: NSFont.smallSystemFontSize),
             .foregroundColor: NSColor.secondaryLabelColor,
         ]
         switch state {
-        case .loading:
+        case .loading, .notConfigured:
             return []
         case .error(let message):
             return [NSAttributedString(string: "      \(message)", attributes: detailAttrs)]

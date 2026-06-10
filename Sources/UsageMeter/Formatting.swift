@@ -51,7 +51,7 @@ enum Fmt {
         switch state {
         case .loading:
             return "\(kind.glyph) …"
-        case .error:
+        case .error, .notConfigured:
             return "\(kind.glyph) —"
         case .ok(let snap):
             let pct = percent(snap.fiveHour.remainingPercent)

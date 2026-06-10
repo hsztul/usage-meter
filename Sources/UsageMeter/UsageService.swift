@@ -43,6 +43,14 @@ enum ServiceState {
     case loading
     case ok(UsageSnapshot)
     case error(String)
+    /// The CLI isn't installed / never logged in on this machine — hide the
+    /// service rather than showing an error.
+    case notConfigured
+
+    var isConfigured: Bool {
+        if case .notConfigured = self { return false }
+        return true
+    }
 }
 
 enum FetchError: LocalizedError {
@@ -198,6 +206,8 @@ func fetchUsage(for kind: ServiceKind) async -> ServiceState {
         case .claude: return .ok(try await ClaudeUsage.fetch())
         case .codex: return .ok(try await CodexUsage.fetch())
         }
+    } catch FetchError.noCredentials {
+        return .notConfigured
     } catch {
         return .error(error.localizedDescription)
     }
