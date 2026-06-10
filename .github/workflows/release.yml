@@ -1,0 +1,45 @@
+name: Release
+
+# Build the DMG and publish a GitHub Release whenever a version tag is pushed.
+#   git tag v1.1 && git push origin v1.1
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write  # needed to create the release
+
+jobs:
+  release:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build DMG
+        run: make dmg
+
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          cat > notes.md <<'EOF'
+          A macOS menu bar app showing remaining **Claude Code** and **OpenAI Codex** subscription usage — the same numbers as `/usage` and `/status`, always a glance away.
+
+          The menu bar shows the selected service's remaining % of its 5-hour window and when it resets (e.g. `✳ 72% · 3pm`). Click the icon to see both services with their 5-hour and weekly windows, switch which one is shown, refresh, or toggle launch-at-login.
+
+          ### Install
+          1. Download **UsageMeter.dmg** below and open it.
+          2. Drag **UsageMeter** into the **Applications** folder.
+          3. **First launch:** right-click the app → **Open** → **Open**. The app is ad-hoc signed (not notarized), so macOS Gatekeeper blocks a plain double-click the first time. You only need to do this once. Alternatively: `xattr -dr com.apple.quarantine /Applications/UsageMeter.app`
+
+          ### Notes
+          - It reuses the credentials the CLIs already store — no separate login. A service you're not signed into simply doesn't appear.
+          - Checking usage is free: these are metadata reads, the same calls the CLIs make. No tokens or quota are consumed.
+          - Requires macOS 13+. You'll see usage for whichever of `claude` / `codex` you're logged into.
+          EOF
+
+          gh release create "$TAG" build/UsageMeter.dmg \
+            --title "UsageMeter $TAG" \
+            --notes-file notes.md

@@ -134,6 +134,14 @@ make dmg            # -> build/UsageMeter.dmg (drag-to-Applications)
 `scripts/make_dmg.sh` stages the `.app` next to an `/Applications` symlink and
 packs them into a compressed disk image with `hdiutil` — no dependencies.
 
+**Cutting a release.** Pushing a `v*` tag triggers
+`.github/workflows/release.yml`, which builds the DMG on a macOS runner and
+publishes a GitHub Release with it attached:
+
+```sh
+git tag v1.1 && git push origin v1.1
+```
+
 Recipients hit Gatekeeper because the app is only ad-hoc signed (see the
 [Gatekeeper note](#from-a-dmg-easiest)). To remove that friction you need a paid
 Apple Developer ID to sign **and notarize** the app before building the DMG:
