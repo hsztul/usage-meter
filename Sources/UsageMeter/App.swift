@@ -29,12 +29,13 @@ enum Main {
                 print("\(kind.displayName): \(Fmt.statusTitle(kind: kind, state: state))")
                 switch state {
                 case .ok(let snap):
-                    print("  5-hour  \(Fmt.percent(snap.fiveHour.remainingPercent)) left, "
-                        + "resets \(Fmt.fullTime(snap.fiveHour.resetsAt))")
-                    if let weekly = snap.weekly {
-                        print("  Weekly  \(Fmt.percent(weekly.remainingPercent)) left, "
-                            + "resets \(Fmt.fullTime(weekly.resetsAt))")
+                    func describe(_ label: String, _ w: Window) {
+                        let reset = w.resetsAt.map { ", resets \(Fmt.fullTime($0))" } ?? ""
+                        print("  \(label)  \(Fmt.percent(w.remainingPercent)) left\(reset)")
                     }
+                    if let five = snap.fiveHour { describe("5-hour", five) }
+                    if let weekly = snap.weekly { describe("Weekly", weekly) }
+                    if snap.primary == nil { print("  (no active limits reported)") }
                 case .error(let message):
                     print("  error: \(message)")
                 case .loading, .notConfigured:
@@ -197,7 +198,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         case .loading: summary = "loading…"
         case .error: summary = "unavailable"
         case .notConfigured: summary = ""  // hidden from the menu; not rendered
-        case .ok(let snap): summary = "\(Fmt.percent(snap.fiveHour.remainingPercent)) left"
+        case .ok(let snap):
+            if let w = snap.primary {
+                let suffix = snap.primaryIsWeekly ? " (weekly)" : ""
+                summary = "\(Fmt.percent(w.remainingPercent)) left\(suffix)"
+            } else {
+                summary = "no active limits"
+            }
         }
         let title = NSMutableAttributedString(
             string: kind.displayName,
@@ -222,17 +229,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         case .error(let message):
             return [NSAttributedString(string: "      \(message)", attributes: detailAttrs)]
         case .ok(let snap):
-            var lines = [
-                NSAttributedString(
-                    string: "      5-hour   resets \(Fmt.fullTime(snap.fiveHour.resetsAt))",
-                    attributes: detailAttrs)
-            ]
-            if let weekly = snap.weekly {
-                lines.append(NSAttributedString(
-                    string: "      Weekly   resets \(Fmt.fullTime(weekly.resetsAt))   "
-                        + "(\(Fmt.percent(weekly.remainingPercent)) left)",
-                    attributes: detailAttrs))
+            func line(_ label: String, _ w: Window) -> NSAttributedString {
+                var s = "      \(label)   "
+                if let reset = w.resetsAt {
+                    s += "resets \(Fmt.fullTime(reset))   (\(Fmt.percent(w.remainingPercent)) left)"
+                } else {
+                    s += "\(Fmt.percent(w.remainingPercent)) left"
+                }
+                return NSAttributedString(string: s, attributes: detailAttrs)
             }
+            var lines: [NSAttributedString] = []
+            if let five = snap.fiveHour { lines.append(line("5-hour", five)) }
+            if let weekly = snap.weekly { lines.append(line("Weekly", weekly)) }
             return lines
         }
     }

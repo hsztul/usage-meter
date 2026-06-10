@@ -28,15 +28,24 @@ enum ServiceKind: String, CaseIterable {
 
 struct Window {
     var usedPercent: Double
-    var resetsAt: Date
+    /// Nil if the API didn't include a (parseable) reset time for this window.
+    var resetsAt: Date?
 
     var remainingPercent: Double { max(0, min(100, 100 - usedPercent)) }
 }
 
 struct UsageSnapshot {
-    var fiveHour: Window
+    /// Either window can be absent: the usage API returns `null` blocks in some
+    /// states (e.g. a window that's momentarily exhausted), so we keep whatever
+    /// is present instead of treating the whole response as a failure.
+    var fiveHour: Window?
     var weekly: Window?
     var fetchedAt: Date
+
+    /// The window shown in the menu bar — the 5-hour window normally, falling
+    /// back to the weekly window when the 5-hour block isn't present.
+    var primary: Window? { fiveHour ?? weekly }
+    var primaryIsWeekly: Bool { fiveHour == nil && weekly != nil }
 }
 
 enum ServiceState {
@@ -124,18 +133,21 @@ enum ClaudeUsage {
         }
 
         func window(_ key: String) -> Window? {
+            // A window block can be null/absent; a reset time can be missing.
+            // Only the utilization number is required to make a window usable.
             guard let blk = json[key] as? [String: Any],
-                  let pct = blk["utilization"] as? Double,
-                  let iso = blk["resets_at"] as? String,
-                  let date = parseISO(iso)
+                  let pct = blk["utilization"] as? Double
             else { return nil }
+            let date = (blk["resets_at"] as? String).flatMap(parseISO)
             return Window(usedPercent: pct, resetsAt: date)
         }
 
-        guard let five = window("five_hour") else {
-            throw FetchError.badResponse("missing five_hour block")
+        let five = window("five_hour")
+        let weekly = window("seven_day")
+        guard five != nil || weekly != nil else {
+            throw FetchError.badResponse("no usage windows in response")
         }
-        return UsageSnapshot(fiveHour: five, weekly: window("seven_day"), fetchedAt: Date())
+        return UsageSnapshot(fiveHour: five, weekly: weekly, fetchedAt: Date())
     }
 
     private static func parseISO(_ s: String) -> Date? {
@@ -187,16 +199,18 @@ enum CodexUsage {
         }
         func window(_ key: String) -> Window? {
             guard let blk = rateLimit[key] as? [String: Any],
-                  let pct = blk["used_percent"] as? Double,
-                  let reset = blk["reset_at"] as? Double
+                  let pct = blk["used_percent"] as? Double
             else { return nil }
-            return Window(usedPercent: pct, resetsAt: Date(timeIntervalSince1970: reset))
+            let date = (blk["reset_at"] as? Double).map { Date(timeIntervalSince1970: $0) }
+            return Window(usedPercent: pct, resetsAt: date)
         }
 
-        guard let five = window("primary_window") else {
-            throw FetchError.badResponse("missing primary_window block")
+        let five = window("primary_window")
+        let weekly = window("secondary_window")
+        guard five != nil || weekly != nil else {
+            throw FetchError.badResponse("no usage windows in response")
         }
-        return UsageSnapshot(fiveHour: five, weekly: window("secondary_window"), fetchedAt: Date())
+        return UsageSnapshot(fiveHour: five, weekly: weekly, fetchedAt: Date())
     }
 }
 

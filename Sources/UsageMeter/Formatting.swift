@@ -54,8 +54,12 @@ enum Fmt {
         case .error, .notConfigured:
             return "\(kind.glyph) —"
         case .ok(let snap):
-            let pct = percent(snap.fiveHour.remainingPercent)
-            return "\(kind.glyph) \(pct) · \(compactTime(snap.fiveHour.resetsAt))"
+            guard let w = snap.primary else { return "\(kind.glyph) —" }
+            let pct = percent(w.remainingPercent)
+            if let reset = w.resetsAt {
+                return "\(kind.glyph) \(pct) · \(compactTime(reset))"
+            }
+            return "\(kind.glyph) \(pct)"
         }
     }
 }
