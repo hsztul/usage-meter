@@ -26,17 +26,35 @@ No third-party dependencies — standard library + AppKit only.
 
 ## Install
 
+### From a DMG (easiest)
+
+If you have a `UsageMeter.dmg` (build one with `make dmg`, or grab a shared
+copy), double-click it and **drag UsageMeter into the Applications folder**,
+then launch it from Applications/Spotlight.
+
+> **First launch — Gatekeeper.** The app is ad-hoc signed (not notarized with a
+> paid Apple Developer ID), so a *downloaded* copy is quarantined by macOS. The
+> first time, **right-click the app → Open → Open** (instead of double-clicking).
+> You only need to do this once. Alternatively:
+> `xattr -dr com.apple.quarantine /Applications/UsageMeter.app`
+
+### From source
+
 ```sh
 make install
 ```
 
 This builds a release binary, assembles `UsageMeter.app`, ad-hoc code-signs it,
-copies it to `/Applications`, and launches it. The icon appears in your menu bar.
+copies it to `/Applications`, and launches it. Building locally avoids the
+Gatekeeper prompt above (the bits were never quarantined).
+
+### After installing
 
 On first run macOS may prompt for keychain access (to read the Claude Code
 token). Click **Always Allow** so it can refresh without prompting.
 
-To start it automatically on login, open the menu and toggle **Launch at Login**.
+The icon appears in your menu bar. To start it automatically on login, open the
+menu and toggle **Launch at Login**.
 
 ## How it gets the data
 
@@ -90,6 +108,25 @@ make run                    # bundle + launch from build/ (doesn't touch /Applic
 
 `make run` and `make install` both `pkill` any running instance first, so you
 can just re-run after a change.
+
+### Distribute
+
+```sh
+make dmg            # -> build/UsageMeter.dmg (drag-to-Applications)
+```
+
+`scripts/make_dmg.sh` stages the `.app` next to an `/Applications` symlink and
+packs them into a compressed disk image with `hdiutil` — no dependencies.
+
+Recipients hit Gatekeeper because the app is only ad-hoc signed (see the
+[Gatekeeper note](#from-a-dmg-easiest)). To remove that friction you need a paid
+Apple Developer ID to sign **and notarize** the app before building the DMG:
+
+```sh
+codesign --force --options runtime --sign "Developer ID Application: NAME (TEAMID)" build/UsageMeter.app
+xcrun notarytool submit build/UsageMeter.dmg --apple-id … --team-id … --password … --wait
+xcrun stapler staple build/UsageMeter.dmg
+```
 
 ### Inspect the data without the UI
 

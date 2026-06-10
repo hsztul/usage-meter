@@ -7,7 +7,7 @@ ICON_SRC = icon/AppIcon.png
 ICONSET = $(BUILD_DIR)/AppIcon.iconset
 ICNS = $(BUILD_DIR)/AppIcon.icns
 
-.PHONY: build icns bundle install run clean
+.PHONY: build icns bundle install run dmg clean
 
 build:
 	swift build -c release
@@ -61,6 +61,10 @@ install: bundle
 run: bundle
 	pkill -x $(APP_NAME) 2>/dev/null || true
 	open $(APP)
+
+# Build a drag-to-Applications disk image at build/UsageMeter.dmg.
+dmg: bundle
+	bash scripts/make_dmg.sh
 
 clean:
 	rm -rf .build $(BUILD_DIR)
