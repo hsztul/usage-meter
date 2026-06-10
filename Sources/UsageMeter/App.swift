@@ -1,0 +1,222 @@
+import AppKit
+import ServiceManagement
+
+@main
+enum Main {
+    static func main() {
+        if CommandLine.arguments.contains("--check") {
+            runCheck()
+            return
+        }
+        let app = NSApplication.shared
+        let delegate = AppDelegate()
+        app.delegate = delegate
+        app.setActivationPolicy(.accessory)
+        app.run()
+    }
+
+    /// `UsageMeter --check`: fetch both services once and print what the
+    /// menu bar and menu would show. Useful for diagnosing auth issues.
+    private static func runCheck() {
+        let semaphore = DispatchSemaphore(value: 0)
+        Task {
+            for kind in ServiceKind.allCases {
+                let state = await fetchUsage(for: kind)
+                print("\(kind.displayName): \(Fmt.statusTitle(kind: kind, state: state))")
+                switch state {
+                case .ok(let snap):
+                    print("  5-hour  \(Fmt.percent(snap.fiveHour.remainingPercent)) left, "
+                        + "resets \(Fmt.fullTime(snap.fiveHour.resetsAt))")
+                    if let weekly = snap.weekly {
+                        print("  Weekly  \(Fmt.percent(weekly.remainingPercent)) left, "
+                            + "resets \(Fmt.fullTime(weekly.resetsAt))")
+                    }
+                case .error(let message):
+                    print("  error: \(message)")
+                case .loading:
+                    break
+                }
+            }
+            semaphore.signal()
+        }
+        semaphore.wait()
+    }
+}
+
+final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
+    private let selectedServiceKey = "selectedService"
+
+    private var statusItem: NSStatusItem!
+    private var refreshTimer: Timer?
+    private var states: [ServiceKind: ServiceState] = [.claude: .loading, .codex: .loading]
+    private var refreshing = false
+
+    var selectedService: ServiceKind {
+        get {
+            ServiceKind(rawValue: UserDefaults.standard.string(forKey: selectedServiceKey) ?? "")
+                ?? .claude
+        }
+        set {
+            UserDefaults.standard.set(newValue.rawValue, forKey: selectedServiceKey)
+            updateStatusTitle()
+            rebuildMenu()
+        }
+    }
+
+    func applicationDidFinishLaunching(_ notification: Notification) {
+        statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
+        let menu = NSMenu()
+        menu.delegate = self
+        statusItem.menu = menu
+
+        updateStatusTitle()
+        rebuildMenu()
+        refresh()
+
+        refreshTimer = Timer.scheduledTimer(withTimeInterval: 300, repeats: true) { [weak self] _ in
+            self?.refresh()
+        }
+        refreshTimer?.tolerance = 30
+    }
+
+    // MARK: - Refresh
+
+    func refresh() {
+        guard !refreshing else { return }
+        refreshing = true
+        Task { @MainActor in
+            async let claude = fetchUsage(for: .claude)
+            async let codex = fetchUsage(for: .codex)
+            states[.claude] = await claude
+            states[.codex] = await codex
+            refreshing = false
+            updateStatusTitle()
+            rebuildMenu()
+        }
+    }
+
+    func menuWillOpen(_ menu: NSMenu) {
+        refresh()
+    }
+
+    // MARK: - UI
+
+    private func updateStatusTitle() {
+        let kind = selectedService
+        statusItem.button?.title = Fmt.statusTitle(kind: kind, state: states[kind] ?? .loading)
+    }
+
+    private func rebuildMenu() {
+        guard let menu = statusItem.menu else { return }
+        menu.removeAllItems()
+
+        for kind in ServiceKind.allCases {
+            let state = states[kind] ?? .loading
+
+            let header = NSMenuItem(
+                title: "", action: #selector(selectService(_:)), keyEquivalent: "")
+            header.target = self
+            header.representedObject = kind.rawValue
+            header.state = kind == selectedService ? .on : .off
+            header.attributedTitle = serviceHeaderTitle(kind: kind, state: state)
+            menu.addItem(header)
+
+            for detail in serviceDetailLines(state: state) {
+                let item = NSMenuItem(title: "", action: nil, keyEquivalent: "")
+                item.isEnabled = false
+                item.attributedTitle = detail
+                menu.addItem(item)
+            }
+        }
+
+        menu.addItem(.separator())
+
+        let login = NSMenuItem(
+            title: "Launch at Login", action: #selector(toggleLaunchAtLogin(_:)), keyEquivalent: "")
+        login.target = self
+        login.state = SMAppService.mainApp.status == .enabled ? .on : .off
+        login.isEnabled = Bundle.main.bundleIdentifier != nil
+        menu.addItem(login)
+
+        let refreshItem = NSMenuItem(
+            title: "Refresh Now", action: #selector(refreshNow(_:)), keyEquivalent: "r")
+        refreshItem.target = self
+        menu.addItem(refreshItem)
+
+        menu.addItem(.separator())
+        let quit = NSMenuItem(
+            title: "Quit UsageMeter", action: #selector(NSApplication.terminate(_:)),
+            keyEquivalent: "q")
+        menu.addItem(quit)
+    }
+
+    private func serviceHeaderTitle(kind: ServiceKind, state: ServiceState) -> NSAttributedString {
+        let summary: String
+        switch state {
+        case .loading: summary = "loading…"
+        case .error: summary = "unavailable"
+        case .ok(let snap): summary = "\(Fmt.percent(snap.fiveHour.remainingPercent)) left"
+        }
+        let title = NSMutableAttributedString(
+            string: kind.displayName,
+            attributes: [.font: NSFont.menuFont(ofSize: 0)])
+        title.append(NSAttributedString(
+            string: "   \(summary)",
+            attributes: [
+                .font: NSFont.menuFont(ofSize: 0),
+                .foregroundColor: NSColor.secondaryLabelColor,
+            ]))
+        return title
+    }
+
+    private func serviceDetailLines(state: ServiceState) -> [NSAttributedString] {
+        let detailAttrs: [NSAttributedString.Key: Any] = [
+            .font: NSFont.menuFont(ofSize: NSFont.smallSystemFontSize),
+            .foregroundColor: NSColor.secondaryLabelColor,
+        ]
+        switch state {
+        case .loading:
+            return []
+        case .error(let message):
+            return [NSAttributedString(string: "      \(message)", attributes: detailAttrs)]
+        case .ok(let snap):
+            var lines = [
+                NSAttributedString(
+                    string: "      5-hour   resets \(Fmt.fullTime(snap.fiveHour.resetsAt))",
+                    attributes: detailAttrs)
+            ]
+            if let weekly = snap.weekly {
+                lines.append(NSAttributedString(
+                    string: "      Weekly   resets \(Fmt.fullTime(weekly.resetsAt))   "
+                        + "(\(Fmt.percent(weekly.remainingPercent)) left)",
+                    attributes: detailAttrs))
+            }
+            return lines
+        }
+    }
+
+    // MARK: - Actions
+
+    @objc private func selectService(_ sender: NSMenuItem) {
+        guard let raw = sender.representedObject as? String,
+              let kind = ServiceKind(rawValue: raw) else { return }
+        selectedService = kind
+    }
+
+    @objc private func refreshNow(_ sender: NSMenuItem) {
+        refresh()
+    }
+
+    @objc private func toggleLaunchAtLogin(_ sender: NSMenuItem) {
+        do {
+            if SMAppService.mainApp.status == .enabled {
+                try SMAppService.mainApp.unregister()
+            } else {
+                try SMAppService.mainApp.register()
+            }
+        } catch {
+            NSLog("Launch at login toggle failed: \(error)")
+        }
+        rebuildMenu()
+    }
+}
