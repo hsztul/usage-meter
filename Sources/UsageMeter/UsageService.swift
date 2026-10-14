@@ -96,24 +96,34 @@ private func getJSON(url: URL, headers: [String: String]) async throws -> [Strin
 }
 
 enum ClaudeUsage {
-    /// Claude Code stores its OAuth credentials in the login keychain.
+    /// Claude Code stores its OAuth credentials in the login keychain, under
+    /// the macOS user name as the account. Other items can share the service
+    /// name (e.g. an "unknown" account holding only MCP tokens), so ask for the
+    /// user's item first and only accept one that actually has an OAuth token.
     private static func token() throws -> String {
+        for account in [NSUserName(), nil] {
+            if let tok = accessToken(account: account) { return tok }
+        }
+        throw FetchError.noCredentials("No Claude Code login found — run `claude` and sign in")
+    }
+
+    private static func accessToken(account: String?) -> String? {
         let proc = Process()
         proc.executableURL = URL(fileURLWithPath: "/usr/bin/security")
-        proc.arguments = ["find-generic-password", "-s", "Claude Code-credentials", "-w"]
+        var args = ["find-generic-password", "-s", "Claude Code-credentials"]
+        if let account { args += ["-a", account] }
+        proc.arguments = args + ["-w"]
         let out = Pipe()
         proc.standardOutput = out
         proc.standardError = Pipe()
-        try proc.run()
-        proc.waitUntilExit()
+        guard (try? proc.run()) != nil else { return nil }
         let data = out.fileHandleForReading.readDataToEndOfFile()
+        proc.waitUntilExit()
         guard proc.terminationStatus == 0,
               let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
               let oauth = obj["claudeAiOauth"] as? [String: Any],
               let tok = oauth["accessToken"] as? String, !tok.isEmpty
-        else {
-            throw FetchError.noCredentials("No Claude Code login found — run `claude` and sign in")
-        }
+        else { return nil }
         return tok
     }
 
